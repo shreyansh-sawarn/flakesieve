@@ -92,6 +92,9 @@ jobs:
   # demo of the comment.
   dogfood:
     runs-on: ubuntu-latest
+    # GitHub downgrades the token to read-only for pull requests from forks, and
+    # no permissions block changes that. Declaring write here is a request, not a
+    # guarantee — on a fork PR both of these are granted as read.
     permissions:
       contents: write        # push to the history branch
       pull-requests: write   # post the PR comment
@@ -125,6 +128,14 @@ jobs:
         with:
           report-paths: junit.xml
           # Record only on the default branch. Recording PR runs would teach
-          # flakesieve that a genuinely broken test "fails sometimes".
+          # flakesieve that a genuinely broken test "fails sometimes". The action
+          # also refuses in code now (src/action/record-guard.ts); this stays
+          # because it is the documented pattern users copy.
           record: ${{ github.ref == 'refs/heads/main' }}
+          # Don't even attempt the comment on a fork PR. The action handles the
+          # 403 gracefully, but an outside contributor should not have to read a
+          # permissions warning in the log of their first patch to decide whether
+          # they broke something. CONTRIBUTING invites parser PRs; this is the
+          # experience those contributors get.
+          comment: ${{ github.event.pull_request.head.repo.fork != true }}
           fail-on-real: true

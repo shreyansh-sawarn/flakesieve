@@ -41,14 +41,16 @@ Our worst structural weakness. Retry-based tools (ctrf, mikepenz, flexport) flag
 a flake on run #1 with zero history; we report `unknown` for a few dozen runs and
 a first-time user sees nothing useful.
 
-- [ ] **Consume JUnit rerun elements as a supplementary signal.** `flakyFailure`
-      and `rerunFailure` (surefire) and equivalent retry markers mean the runner
-      already proved non-determinism within one run. Treat as evidence
-      equivalent to a same-SHA contradiction — it is the same proof, observed
-      within a run instead of across runs.
-      **Constraint:** must not weaken the historical verdict or let a
-      framework's retry setting override invariant 2 (current state outranks
-      history). Needs its own tests.
+- [x] **Capture within-run contradictions.** A test that fails and passes inside
+      one run is proven non-deterministic without any history — same commit,
+      same machine, same execution. Two sources: two report files disagreeing
+      (`src/core/collect.ts`, which used to collapse this to a plain failure) and
+      Surefire's `<flakyFailure>` (`src/parsers/junit.ts`, which used to parse it
+      as an ordinary pass). Stored as the `c` code and honoured by `analyze` on
+      the very first run.
+- [ ] **Read retry markers from the other formats** as parsers land — Playwright
+      `retry`, pytest-rerunfailures, Jest `retryReasons`. Same signal, different
+      spelling.
 - [ ] **Make the empty-history experience honest and useful.** On run 1, say what
       is happening and when it becomes useful, rather than a wall of `unknown`.
 - [ ] **Bootstrap from existing artifacts (investigate).** ctrf backfills by
@@ -153,8 +155,9 @@ independently from the descriptions below, not from their code.
 - [ ] **Configurable thresholds** — `DEFAULT_CONFIG` is not currently reachable
       from action inputs. Expose carefully; every knob is a way for a user to
       make the tool lie to them.
-- [ ] **History compaction / size guard.** `maxRuns` trims to 200 runs. Confirm
-      the file stays sane for a 10k-test monorepo and document the ceiling.
+- [ ] **Confirm the size ceiling on a 10k-test monorepo.** v2 measures 0.57 MB at
+      2,000 tests × 200 runs, so 10k should be around 3 MB — worth verifying
+      rather than extrapolating, and worth documenting once known.
 - [ ] **Coverage-based test selection** (README roadmap). Large, and Captain's
       partitioning is the prior art. Deliberately last.
 
@@ -177,9 +180,17 @@ Recorded so it doesn't get re-proposed.
 
 ## Done
 
-- [x] JUnit XML parsing — `src/parsers/junit.ts`
-- [x] Flake classification: same-SHA contradictions + rate + broken streak —
-      `src/core/flake.ts`
+- [x] JUnit XML parsing — `src/parsers/junit.ts`, including Surefire retry
+      markers (`flakyFailure` / `rerunFailure`)
+- [x] Flake classification: same-SHA contradictions + within-run contradictions +
+      rate + broken streak — `src/core/flake.ts`
+- [x] History schema v2 — interned ids, positional run strings, automatic v1
+      upgrade. 34.99 MB → 0.57 MB at 2,000 tests × 200 runs
+- [x] `minFailures` floor, so one failure ever no longer marks a test flaky and
+      buries its next failure as known noise
+- [x] Recency window on contradictions, so a fixed flake stops excusing new
+      failures
+- [x] Recording refused in code off the default branch — `src/action/record-guard.ts`
 - [x] PR comment and terminal renderers — `src/report/`
 - [x] GitHub Action that posts and updates the PR comment — `src/action/`
 - [x] Orphan-branch history store, with lost-race handling instead of `--force` —

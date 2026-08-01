@@ -29,8 +29,10 @@ steps:
 
 That's the whole setup. No account, no API key, no service to sign up for.
 
-On the first run there is no history, so everything is reported as unknown. It
-becomes useful after a few dozen runs on your default branch.
+With no history yet, most failures are reported as unknown — flakesieve won't
+guess. The exception is a test that fails and passes within the same run, which
+is proof on its own and is flagged from the first run. The historical verdicts
+sharpen over a few dozen runs on your default branch.
 
 **On pull requests from forks** GitHub issues a read-only token, so the comment
 cannot be posted — no `permissions:` block changes that. flakesieve warns and
@@ -60,7 +62,12 @@ When a test fails on a PR, flakesieve looks at what that same test has done acro
 - 🟡 **Known flake** — it fails intermittently regardless of the change. Not you.
 - ⚫ **Already broken** — it's been failing on main since before this PR. Not you either.
 
-The strongest signal it uses is a **same-SHA contradiction**: the same test, on the same commit, passing in one run and failing in another. That isn't a heuristic — it's proof the test is non-deterministic.
+The strongest signal it uses is a **contradiction**: the same test both passing and failing. That isn't a heuristic — it's proof the test is non-deterministic. It comes in two forms:
+
+- **same commit, two runs** — the test passed in one and failed in another;
+- **inside a single run** — a runner retry succeeded, or two shards disagreed.
+
+The second kind needs no history at all, so flakesieve can call a flake on your very first run rather than after forty.
 
 ## Example output
 
@@ -143,7 +150,7 @@ shift before `v1`.
 Roadmap:
 
 - [x] JUnit XML parsing
-- [x] Flake classification (same-SHA contradictions + historical rate)
+- [x] Flake classification (contradictions across and within runs + historical rate)
 - [x] PR comment + terminal renderers
 - [x] GitHub Action — posts and updates the PR comment
 - [x] Orphan-branch history store

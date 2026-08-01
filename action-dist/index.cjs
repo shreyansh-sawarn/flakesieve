@@ -27067,6 +27067,7 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 // src/core/types.ts
+var ABSENT = "-";
 var STATUS_TO_CODE = {
   passed: "p",
   failed: "f",
@@ -27077,11 +27078,16 @@ var CODE_TO_STATUS = {
   f: "failed",
   s: "skipped"
 };
+function contradictions(stats) {
+  return stats.sameShaContradictions + stats.withinRunContradictions;
+}
 var DEFAULT_CONFIG = {
   minRuns: 10,
+  minFailures: 2,
   flakeThreshold: 0.01,
   brokenThreshold: 0.95,
   brokenStreak: 5,
+  contradictionWindow: 100,
   sparklineLength: 12
 };
 function testId(suite, name) {
@@ -27094,31 +27100,35 @@ function splitId(id) {
   if (idx === -1) return { suite: "", name: id };
   return { suite: id.slice(0, idx), name: id.slice(idx + 3) };
 }
+function codeAt(run2, i) {
+  return run2.results[i] ?? ABSENT;
+}
 function computeStats(history, config = DEFAULT_CONFIG) {
   const runs = history.runs;
-  const ids = /* @__PURE__ */ new Set();
-  for (const run2 of runs) {
-    for (const id of Object.keys(run2.results)) ids.add(id);
-  }
+  const ids = history.tests;
+  const recent = runs.slice(-config.contradictionWindow);
   const byCommit = /* @__PURE__ */ new Map();
-  for (const run2 of runs) {
+  for (const run2 of recent) {
     let commit = byCommit.get(run2.commitSha);
     if (!commit) {
       commit = /* @__PURE__ */ new Map();
       byCommit.set(run2.commitSha, commit);
     }
-    for (const [id, code] of Object.entries(run2.results)) {
-      if (code === "s") continue;
-      let outcomes = commit.get(id);
+    for (let i = 0; i < ids.length; i++) {
+      const code = codeAt(run2, i);
+      if (code === "s" || code === ABSENT) continue;
+      let outcomes = commit.get(i);
       if (!outcomes) {
         outcomes = /* @__PURE__ */ new Set();
-        commit.set(id, outcomes);
+        commit.set(i, outcomes);
       }
       outcomes.add(code);
     }
   }
   const stats = /* @__PURE__ */ new Map();
-  for (const id of ids) {
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (id === void 0) continue;
     const { suite, name } = splitId(id);
     let passes = 0;
     let failures = 0;
@@ -27128,12 +27138,19 @@ function computeStats(history, config = DEFAULT_CONFIG) {
     let consecutiveFailures = 0;
     const sparkChars = [];
     for (const run2 of runs) {
-      const code = run2.results[id];
-      if (code === void 0) {
+      const code = codeAt(run2, i);
+      if (code === ABSENT) {
         sparkChars.push("\xB7");
         continue;
       }
       firstSeenAt ??= run2.timestamp;
+      if (code === "c") {
+        failures++;
+        consecutiveFailures = 0;
+        lastFailureAt = run2.timestamp;
+        sparkChars.push("C");
+        continue;
+      }
       const status = CODE_TO_STATUS[code];
       if (status === "passed") {
         passes++;
@@ -27151,10 +27168,13 @@ function computeStats(history, config = DEFAULT_CONFIG) {
     }
     let sameShaContradictions = 0;
     for (const commit of byCommit.values()) {
-      const outcomes = commit.get(id);
-      if (outcomes && outcomes.has("p") && outcomes.has("f")) {
-        sameShaContradictions++;
-      }
+      const outcomes = commit.get(i);
+      if (!outcomes) continue;
+      if (outcomes.has("p") && outcomes.has("f")) sameShaContradictions++;
+    }
+    let withinRunContradictions = 0;
+    for (const run2 of recent) {
+      if (codeAt(run2, i) === "c") withinRunContradictions++;
     }
     const observed = passes + failures;
     stats.set(id, {
@@ -27166,6 +27186,7 @@ function computeStats(history, config = DEFAULT_CONFIG) {
       failures,
       skips,
       sameShaContradictions,
+      withinRunContradictions,
       failureRate: observed === 0 ? 0 : failures / observed,
       consecutiveFailures,
       firstSeenAt,
@@ -27179,10 +27200,10 @@ function classify(stats, config = DEFAULT_CONFIG) {
   if (stats.consecutiveFailures >= config.brokenStreak || stats.totalRuns >= config.minRuns && stats.failureRate >= config.brokenThreshold) {
     return "broken";
   }
-  if (stats.sameShaContradictions > 0) return "flaky";
+  if (contradictions(stats) > 0) return "flaky";
   if (stats.totalRuns < config.minRuns) return "unknown";
   if (stats.failures === 0) return "healthy";
-  if (stats.passes > 0 && stats.failureRate >= config.flakeThreshold) {
+  if (stats.passes > 0 && stats.failures >= config.minFailures && stats.failureRate >= config.flakeThreshold) {
     return "flaky";
   }
   return "healthy";
@@ -27201,22 +27222,29 @@ function analyze(current, history, config = DEFAULT_CONFIG) {
   for (const test of current.tests) {
     if (test.status !== "failed") continue;
     const prior = stats.get(test.id);
+    const base = {
+      failedNow: true,
+      failureMessage: test.failureMessage,
+      contradictedInRun: test.contradictedInRun
+    };
+    if (test.contradictedInRun) {
+      report.knownFlakes.push({
+        ...base,
+        stats: prior ?? emptyStats(test.id, test.suite, test.name),
+        verdict: "flaky"
+      });
+      continue;
+    }
     if (!prior || prior.totalRuns === 0) {
       report.insufficientHistory.push({
+        ...base,
         stats: prior ?? emptyStats(test.id, test.suite, test.name),
-        verdict: "unknown",
-        failedNow: true,
-        failureMessage: test.failureMessage
+        verdict: "unknown"
       });
       continue;
     }
     const verdict = classify(prior, config);
-    const finding = {
-      stats: prior,
-      verdict,
-      failedNow: true,
-      failureMessage: test.failureMessage
-    };
+    const finding = { ...base, stats: prior, verdict };
     switch (verdict) {
       case "flaky":
         report.knownFlakes.push(finding);
@@ -27252,38 +27280,125 @@ function emptyStats(id, suite, name) {
     failures: 0,
     skips: 0,
     sameShaContradictions: 0,
+    withinRunContradictions: 0,
     failureRate: 0,
     consecutiveFailures: 0,
     recentOutcomes: ""
   };
 }
-function appendRun(history, run2) {
-  const results = {};
-  for (const test of run2.tests) {
-    results[test.id] = STATUS_TO_CODE[test.status];
+function decodeRun(ids, run2) {
+  const out = /* @__PURE__ */ new Map();
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (id === void 0) continue;
+    const code = codeAt(run2, i);
+    if (code !== ABSENT) out.set(id, code);
   }
-  const runs = [
-    ...history.runs,
-    {
+  return out;
+}
+function encodeRun(ids, results) {
+  const chars = new Array(ids.length).fill(ABSENT);
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    if (id === void 0) continue;
+    const code = results.get(id);
+    if (code) chars[i] = code;
+  }
+  return chars.join("");
+}
+function appendRun(history, run2) {
+  const decoded = history.runs.map((r) => ({
+    meta: r,
+    results: decodeRun(history.tests, r)
+  }));
+  const incoming = /* @__PURE__ */ new Map();
+  for (const test of run2.tests) {
+    incoming.set(
+      test.id,
+      test.contradictedInRun ? "c" : STATUS_TO_CODE[test.status]
+    );
+  }
+  decoded.push({
+    meta: {
       runId: run2.runId,
       commitSha: run2.commitSha,
       branch: run2.branch,
       timestamp: run2.timestamp,
-      results
+      results: ""
+    },
+    results: incoming
+  });
+  const retained = decoded.slice(-history.maxRuns);
+  const live = /* @__PURE__ */ new Set();
+  for (const r of retained) for (const id of r.results.keys()) live.add(id);
+  const tests = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const id of history.tests) {
+    if (live.has(id) && !seen.has(id)) {
+      seen.add(id);
+      tests.push(id);
     }
-  ];
+  }
+  for (const r of retained) {
+    for (const id of r.results.keys()) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        tests.push(id);
+      }
+    }
+  }
   return {
     ...history,
+    version: 2,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    runs: runs.slice(-history.maxRuns)
+    tests,
+    runs: retained.map((r) => ({
+      runId: r.meta.runId,
+      commitSha: r.meta.commitSha,
+      branch: r.meta.branch,
+      timestamp: r.meta.timestamp,
+      results: encodeRun(tests, r.results)
+    }))
   };
 }
 function emptyHistory(maxRuns = 200) {
   return {
-    version: 1,
+    version: 2,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
     maxRuns,
+    tests: [],
     runs: []
+  };
+}
+function migrateV1(v1) {
+  const tests = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const run2 of v1.runs) {
+    for (const id of Object.keys(run2.results)) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        tests.push(id);
+      }
+    }
+  }
+  return {
+    version: 2,
+    updatedAt: v1.updatedAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+    maxRuns: v1.maxRuns ?? 200,
+    tests,
+    runs: v1.runs.map((run2) => {
+      const results = /* @__PURE__ */ new Map();
+      for (const [id, code] of Object.entries(run2.results)) {
+        if (code === "p" || code === "f" || code === "s") results.set(id, code);
+      }
+      return {
+        runId: run2.runId,
+        commitSha: run2.commitSha,
+        branch: run2.branch,
+        timestamp: run2.timestamp,
+        results: encodeRun(tests, results)
+      };
+    })
   };
 }
 
@@ -27313,8 +27428,12 @@ function messageOf(node) {
 }
 function statusOf(raw) {
   if (raw.failure != null || raw.error != null) return "failed";
+  if (raw.rerunFailure != null || raw.rerunError != null) return "failed";
   if (raw.skipped != null) return "skipped";
   return "passed";
+}
+function contradictedInRun(raw) {
+  return raw.flakyFailure != null || raw.flakyError != null;
 }
 function collect(suite, prefix, out) {
   const suiteName = suite["@name"]?.trim();
@@ -27332,7 +27451,10 @@ function collect(suite, prefix, out) {
       name,
       status,
       durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1e3) : 0,
-      failureMessage: status === "failed" ? messageOf(raw.failure ?? raw.error) : void 0
+      failureMessage: status === "failed" ? messageOf(raw.failure ?? raw.error ?? raw.rerunFailure ?? raw.rerunError) : void 0,
+      // Left undefined rather than false so the flag never appears in stored
+      // output for the overwhelming majority of tests that did not retry.
+      contradictedInRun: contradictedInRun(raw) || void 0
     });
   }
   for (const nested of suite.testsuite ?? []) {
@@ -27399,7 +27521,15 @@ Check that your test runner emitted JUnit XML and that the glob is correct.`
     }
     for (const test of parser.parse(content, file)) {
       const existing = byId.get(test.id);
-      if (!existing || test.status === "failed") byId.set(test.id, test);
+      if (!existing) {
+        byId.set(test.id, test);
+        continue;
+      }
+      const disagree = existing.status === "failed" !== (test.status === "failed") && existing.status !== "skipped" && test.status !== "skipped";
+      const contradicted = disagree || existing.contradictedInRun || test.contradictedInRun;
+      const rank = (c) => c.status === "failed" ? 2 : c.status === "passed" ? 1 : 0;
+      const winner = rank(test) > rank(existing) ? test : existing;
+      byId.set(test.id, { ...winner, contradictedInRun: contradicted || void 0 });
     }
   }
   return {
@@ -27433,7 +27563,8 @@ function row(f) {
   const s = f.stats;
   const verdict = `${MARKERS[f.verdict]} ${f.verdict}`;
   const rate = s.totalRuns === 0 ? "\u2014" : `${pct(s.failureRate)} of ${s.totalRuns}`;
-  return `| \`${s.id}\` | ${verdict} | ${rate} | ${s.sameShaContradictions} | ${sparkline(s.recentOutcomes)} |`;
+  const proof = f.contradictedInRun ? `${contradictions(s) + 1} (1 this run)` : String(contradictions(s));
+  return `| \`${s.id}\` | ${verdict} | ${rate} | ${proof} | ${sparkline(s.recentOutcomes)} |`;
 }
 function renderComment(report) {
   const { likelyReal, knownFlakes, alreadyBroken, insufficientHistory } = report;
@@ -27478,7 +27609,7 @@ function renderComment(report) {
       "<details>",
       `<summary>${summary2}</summary>`,
       "",
-      "| Test | Verdict | Failure rate | Same-commit contradictions | Recent |",
+      "| Test | Verdict | Failure rate | Contradictions | Recent |",
       "|---|---|---|---|---|",
       ...[...knownFlakes, ...alreadyBroken].map(row),
       ""
@@ -27514,9 +27645,16 @@ function line(f, colour) {
   if (s.totalRuns > 0) {
     detail.push(`fails ${pct2(s.failureRate)} of ${s.totalRuns} runs`);
   }
+  if (f.contradictedInRun) {
+    detail.push("failed and passed in this run");
+  }
   if (s.sameShaContradictions > 0) {
     const n = s.sameShaContradictions;
     detail.push(`${n} same-commit contradiction${n === 1 ? "" : "s"}`);
+  }
+  if (s.withinRunContradictions > 0) {
+    const n = s.withinRunContradictions;
+    detail.push(`${n} same-run contradiction${n === 1 ? "" : "s"}`);
   }
   if (s.recentOutcomes) {
     detail.push(s.recentOutcomes);
@@ -27655,6 +27793,18 @@ async function checkProtection(readRules, owner, repo, branch) {
   return protectionWarning(`${owner}/${repo}`, branch, missing);
 }
 
+// src/action/record-guard.ts
+function recordRefusal(ctx) {
+  if (ctx.eventName.startsWith("pull_request")) {
+    return `refusing to record: this is a ${ctx.eventName} run. Recording pull requests poisons the baseline \u2014 a PR that legitimately breaks a test would teach flakesieve that the test fails intermittently, and real regressions in it would be reported as known flakes. Set record to github.ref == 'refs/heads/` + (ctx.defaultBranch ?? "main") + "' so it is only true on the default branch.";
+  }
+  if (!ctx.defaultBranch) return null;
+  if (ctx.branch !== ctx.defaultBranch) {
+    return `refusing to record: this run is on '${ctx.branch}', not the default branch '${ctx.defaultBranch}'. History is the baseline that PR failures are judged against, so it must only ever describe the default branch. Set record to github.ref == 'refs/heads/${ctx.defaultBranch}'.`;
+  }
+  return null;
+}
+
 // src/action/history-branch.ts
 async function git(args, options = {}) {
   const res = await getExecOutput("git", args, {
@@ -27730,8 +27880,18 @@ function parseHistory(raw) {
   if (raw === null) return emptyHistory();
   try {
     const parsed = JSON.parse(raw);
-    if (parsed.version !== 1 || !Array.isArray(parsed.runs)) {
-      throw new Error("unexpected shape");
+    if (!Array.isArray(parsed.runs)) throw new Error("unexpected shape");
+    if (parsed.version === 1) {
+      const upgraded = migrateV1(
+        parsed
+      );
+      info(
+        `upgraded history from version 1 to 2 (${upgraded.runs.length} runs, ${upgraded.tests.length} tests); the next recorded run writes the new format`
+      );
+      return upgraded;
+    }
+    if (parsed.version !== 2 || !Array.isArray(parsed.tests)) {
+      throw new Error(`unsupported version ${String(parsed.version)}`);
     }
     return parsed;
   } catch (err) {
@@ -27854,7 +28014,15 @@ async function run() {
       });
     }
   }
-  if (shouldRecord) {
+  const refusal = shouldRecord ? recordRefusal({
+    eventName: context2.eventName,
+    branch: run2.branch,
+    defaultBranch: context2.payload.repository?.default_branch
+  }) : null;
+  if (refusal) {
+    warning(refusal, { title: "flakesieve: run not recorded" });
+  }
+  if (shouldRecord && !refusal) {
     const updated = appendRun(history, run2);
     const pushed = await writeHistoryFile({
       branch,
