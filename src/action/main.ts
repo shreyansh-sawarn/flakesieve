@@ -4,7 +4,11 @@ import { analyze, appendRun, emptyHistory } from '../core/flake.js';
 import { collectRun } from '../core/collect.js';
 import { renderComment } from '../report/comment.js';
 import { renderTerminal } from '../report/terminal.js';
-import { decideComment, type ExistingComment } from './comment.js';
+import {
+  commentFailureWarning,
+  decideComment,
+  type ExistingComment,
+} from './comment.js';
 import { checkProtection } from './protection.js';
 import { readHistoryFile, writeHistoryFile } from './history-branch.js';
 import type { HistoryFile } from '../core/types.js';
@@ -171,7 +175,16 @@ export async function run(): Promise<void> {
   }
 
   if (shouldComment) {
-    await upsertComment(renderComment(report));
+    // The comment is delivery, not analysis. A fork PR's read-only token makes
+    // the write 403, and a red step there would blame a contributor for a
+    // permission they were never given. See commentFailureWarning.
+    try {
+      await upsertComment(renderComment(report));
+    } catch (err) {
+      core.warning(commentFailureWarning(err), {
+        title: 'flakesieve: comment not posted',
+      });
+    }
   }
 
   if (shouldRecord) {

@@ -32,6 +32,12 @@ That's the whole setup. No account, no API key, no service to sign up for.
 On the first run there is no history, so everything is reported as unknown. It
 becomes useful after a few dozen runs on your default branch.
 
+**On pull requests from forks** GitHub issues a read-only token, so the comment
+cannot be posted — no `permissions:` block changes that. flakesieve warns and
+carries on: the verdicts still appear in the job summary and the step log, and
+the check stays green. Contributors never see a red X for a permission they were
+never given.
+
 ---
 
 ## The problem

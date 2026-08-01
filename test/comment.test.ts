@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decideComment, RESOLVED_BODY } from '../src/action/comment.js';
+import {
+  commentFailureWarning,
+  decideComment,
+  RESOLVED_BODY,
+} from '../src/action/comment.js';
 import { COMMENT_MARKER, renderComment } from '../src/report/comment.js';
 import type { Report } from '../src/core/types.js';
 
@@ -67,6 +71,52 @@ describe('decideComment', () => {
       kind: 'create',
       body: 'body',
     });
+  });
+});
+
+describe('commentFailureWarning', () => {
+  /** What octokit throws when the token may not write to the PR. */
+  function forbidden(): Error {
+    return Object.assign(
+      new Error('Resource not accessible by integration'),
+      { status: 403 },
+    );
+  }
+
+  it('names forks as the cause of a 403', () => {
+    // The fork case is the one the PR author cannot fix and did not cause.
+    const out = commentFailureWarning(forbidden());
+    expect(out).toMatch(/fork/i);
+    expect(out).toContain('read-only');
+  });
+
+  it('says the verdicts survived and how to silence it', () => {
+    const out = commentFailureWarning(forbidden());
+    expect(out).toContain('job summary');
+    expect(out).toContain('comment: false');
+  });
+
+  it('does not blame forks for unrelated failures', () => {
+    const out = commentFailureWarning(
+      Object.assign(new Error('Bad gateway'), { status: 502 }),
+    );
+    expect(out).not.toMatch(/fork/i);
+    expect(out).toContain('Bad gateway');
+  });
+
+  it('handles errors with no status and non-errors', () => {
+    expect(commentFailureWarning(new Error('socket hang up'))).toContain(
+      'socket hang up',
+    );
+    expect(commentFailureWarning('nope')).toContain('nope');
+    expect(commentFailureWarning(undefined)).toContain('undefined');
+  });
+
+  it('ignores a non-numeric status rather than throwing', () => {
+    const out = commentFailureWarning(
+      Object.assign(new Error('weird'), { status: '403' }),
+    );
+    expect(out).toContain('weird');
   });
 });
 
