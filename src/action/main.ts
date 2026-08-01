@@ -116,16 +116,21 @@ export async function run(): Promise<void> {
   core.setOutput('already-broken', report.alreadyBroken.length);
   core.setOutput('runs-analyzed', report.runsAnalyzed);
 
-  // The job summary is a nicety. If the runner has not provided a writable
-  // summary file, that must not take down someone's CI run.
-  try {
-    await core.summary
-      .addRaw(renderComment(report) ?? '✅ No unexplained test failures.')
-      .write();
-  } catch (err) {
-    core.debug(
-      `could not write job summary: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  // Opt-out has to live here rather than in the workflow: the runner re-injects
+  // its own GITHUB_* variables for every step, so pointing GITHUB_STEP_SUMMARY
+  // at /dev/null from a step `env:` block is silently ignored.
+  if (core.getBooleanInput('job-summary')) {
+    // The summary is a nicety. If the runner has not provided a writable file,
+    // that must not take down someone's CI run.
+    try {
+      await core.summary
+        .addRaw(renderComment(report) ?? '✅ No unexplained test failures.')
+        .write();
+    } catch (err) {
+      core.debug(
+        `could not write job summary: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   if (shouldComment) {

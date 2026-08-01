@@ -27753,12 +27753,14 @@ async function run() {
   setOutput("known-flakes", report.knownFlakes.length);
   setOutput("already-broken", report.alreadyBroken.length);
   setOutput("runs-analyzed", report.runsAnalyzed);
-  try {
-    await summary.addRaw(renderComment(report) ?? "\u2705 No unexplained test failures.").write();
-  } catch (err) {
-    debug(
-      `could not write job summary: ${err instanceof Error ? err.message : String(err)}`
-    );
+  if (getBooleanInput("job-summary")) {
+    try {
+      await summary.addRaw(renderComment(report) ?? "\u2705 No unexplained test failures.").write();
+    } catch (err) {
+      debug(
+        `could not write job summary: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
   if (shouldComment) {
     await upsertComment(renderComment(report));
