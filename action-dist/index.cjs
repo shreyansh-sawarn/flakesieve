@@ -27596,6 +27596,45 @@ function decideComment(rendered, existing) {
   return { kind: "update", id: mine.id, body: rendered };
 }
 
+// src/action/protection.ts
+var REQUIRED_RULES = ["deletion", "non_fast_forward"];
+function missingProtections(activeRuleTypes) {
+  const active = new Set(activeRuleTypes);
+  return REQUIRED_RULES.filter((r) => !active.has(r));
+}
+var LABELS = {
+  deletion: "deletion",
+  non_fast_forward: "force-push"
+};
+function protectionWarning(repo, branch, missing) {
+  const what = missing.map((m) => LABELS[m]).join(" and ");
+  return [
+    `The history branch '${branch}' is not protected against ${what}.`,
+    "",
+    "It holds every recorded run. If it is deleted, all flakesieve history is",
+    "lost permanently and verdicts restart from zero.",
+    "",
+    "To protect it:",
+    "",
+    `  gh api -X POST repos/${repo}/rulesets \\`,
+    `    -f name='flakesieve history' -f target=branch -f enforcement=active \\`,
+    `    -F 'conditions[ref_name][include][]=refs/heads/${branch}' \\`,
+    `    -F 'rules[][type]=deletion' -F 'rules[][type]=non_fast_forward'`,
+    "",
+    "Do not add a pull-request rule to this branch \u2014 flakesieve pushes to it",
+    "directly on every default-branch run, and a PR requirement would break it.",
+    "",
+    "Set `protection-check: false` to silence this."
+  ].join("\n");
+}
+async function checkProtection(readRules, owner, repo, branch) {
+  const rules = await readRules(owner, repo, branch);
+  if (rules === null) return null;
+  const missing = missingProtections(rules);
+  if (missing.length === 0) return null;
+  return protectionWarning(`${owner}/${repo}`, branch, missing);
+}
+
 // src/action/history-branch.ts
 async function git(args, options = {}) {
   const res = await getExecOutput("git", args, {
@@ -27726,6 +27765,30 @@ async function upsertComment(body) {
       break;
   }
 }
+async function warnIfUnprotected(branch) {
+  if (!getBooleanInput("protection-check")) return;
+  const token = getInput("token");
+  if (!token) return;
+  const { owner, repo } = context2.repo;
+  const octokit = getOctokit(token);
+  const warning2 = await checkProtection(
+    async (o, r, b) => {
+      try {
+        const res = await octokit.request(
+          "GET /repos/{owner}/{repo}/rules/branches/{branch}",
+          { owner: o, repo: r, branch: b }
+        );
+        return res.data.map((rule) => rule.type);
+      } catch {
+        return null;
+      }
+    },
+    owner,
+    repo,
+    branch
+  );
+  if (warning2) warning(warning2, { title: "flakesieve: history branch unprotected" });
+}
 async function run() {
   const patterns = getInput("report-paths").split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
   const branch = getInput("history-branch") || "flakesieve-history";
@@ -27777,6 +27840,7 @@ async function run() {
     });
     if (pushed) {
       info(`recorded run to ${branch} (${updated.runs.length} runs stored)`);
+      await warnIfUnprotected(branch);
     } else {
       warning(
         `could not push to ${branch} \u2014 another run updated it first. This run was not recorded, which is harmless.`

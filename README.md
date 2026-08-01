@@ -86,6 +86,19 @@ Flake detection needs history across runs, which is why every existing tool is a
 - History is versioned, diffable, and yours.
 - Deleting the branch resets it. That's the whole uninstall.
 
+**Protect that branch once, up front.** It holds data that cannot be regenerated —
+delete it and every verdict restarts from zero:
+
+```bash
+gh api -X POST repos/OWNER/REPO/rulesets \
+  -f name='flakesieve history' -f target=branch -f enforcement=active \
+  -F 'conditions[ref_name][include][]=refs/heads/flakesieve-history' \
+  -F 'rules[][type]=deletion' -F 'rules[][type]=non_fast_forward'
+```
+
+flakesieve warns if you skip this, but never applies it for you — doing so would
+require `administration: write` on your repo, which no test tool should be asking for.
+
 Details and trade-offs: [docs/history-storage.md](docs/history-storage.md).
 
 ## Works with your stack

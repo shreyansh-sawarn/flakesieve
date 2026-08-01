@@ -29,6 +29,40 @@ An orphan branch has no shared ancestry with `main`, so:
 
 The orphan branch is the only option that is durable, free, self-hosted, and diffable.
 
+## Protect the branch
+
+**Do this once, on any repo using flakesieve.**
+
+The history branch holds accumulated run data that cannot be regenerated. Delete it
+and every recorded run is gone, taking every verdict with it — you restart from zero
+and get no useful output for weeks. It is also the branch nobody ever looks at, which
+makes it exactly the kind of thing that gets swept up in a "clean up old branches"
+pass.
+
+```bash
+gh api -X POST repos/OWNER/REPO/rulesets \
+  -f name='flakesieve history' -f target=branch -f enforcement=active \
+  -F 'conditions[ref_name][include][]=refs/heads/flakesieve-history' \
+  -F 'rules[][type]=deletion' -F 'rules[][type]=non_fast_forward'
+```
+
+That blocks deletion and force-pushes while still allowing the normal pushes
+flakesieve makes on every default-branch run.
+
+> **Do not add a pull-request rule to this branch.** flakesieve writes to it directly
+> with `GITHUB_TOKEN`; requiring a PR would break recording entirely.
+
+The action checks this after each successful record and warns if protection is
+missing. It only ever reports — applying protection would require
+`administration: write`, the permission to change repository settings, which is far
+more than a test-analytics tool should ask for and far more than you should hand to a
+third-party action that runs on every build. Silence the check with
+`protection-check: false`.
+
+Note the check reads *rulesets*. If you protect the branch with classic branch
+protection instead, the warning may still appear; that is a false positive, and
+`protection-check: false` is the right response.
+
 ## File format
 
 ```json
