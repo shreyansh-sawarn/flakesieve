@@ -69,14 +69,19 @@ jobs:
           INPUT_RECORD: 'false'
           INPUT_FAIL-ON-REAL: 'false'
           INPUT_REPORT-PATHS: 'test/fixtures/demo-run.xml'
-          INPUT_HISTORY-BRANCH: 'flakesieve-history'
-          INPUT_HISTORY-PATH: 'history.json'
           # This step runs against the synthetic demo fixture, whose "failures"
-          # are invented. Without this, those fake results are published to the
-          # real CI summary page and read as though flakesieve's own tests are
-          # failing — bad for any project, worse for one selling trustworthy
-          # verdicts about test failures.
-          GITHUB_STEP_SUMMARY: /dev/null
+          # are invented. Publishing them to the real summary page makes it look
+          # like flakesieve's own tests are failing.
+          #
+          # Note this must be an input, not `GITHUB_STEP_SUMMARY: /dev/null` —
+          # the runner re-injects its own GITHUB_* variables per step, so that
+          # override is silently ignored.
+          INPUT_JOB-SUMMARY: 'false'
+          # Deliberately a branch that does not exist. Reading the real history
+          # would compare invented fixture tests against genuine run data, so the
+          # smoke test's output would drift as history accumulates.
+          INPUT_HISTORY-BRANCH: 'flakesieve-smoke-test-no-such-branch'
+          INPUT_HISTORY-PATH: 'history.json'
         run: node action-dist/index.cjs
 
   # Dogfooding: run flakesieve against flakesieve's own test results.

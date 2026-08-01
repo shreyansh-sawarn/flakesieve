@@ -23,6 +23,12 @@ inputs:
     description: 'Post or update a PR comment with the findings.'
     required: false
     default: 'true'
+  job-summary:
+    description: >
+      Write the findings to the workflow job summary. Set false for smoke tests
+      or any run whose results should not appear on the Actions summary page.
+    required: false
+    default: 'true'
   record:
     description: >
       Append this run to history. Set true only on the default branch — recording
