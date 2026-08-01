@@ -17,6 +17,13 @@ interface RawCase {
   failure?: unknown;
   error?: unknown;
   skipped?: unknown;
+  // Surefire and its imitators record retries as extra children rather than
+  // extra <testcase> elements. `flaky*` means the test failed and then passed;
+  // `rerun*` means it failed every time and the <failure> above is the verdict.
+  flakyFailure?: unknown;
+  flakyError?: unknown;
+  rerunFailure?: unknown;
+  rerunError?: unknown;
 }
 
 interface RawSuite {
@@ -42,8 +49,26 @@ function statusOf(raw: RawCase): TestStatus {
   // `error` and `failure` are distinct in the JUnit schema (thrown exception vs
   // failed assertion) but mean the same thing here: the test did not pass.
   if (raw.failure != null || raw.error != null) return 'failed';
+  // A rerun failure without a <failure> sibling is malformed, but if a runner
+  // emits it we should believe the failure rather than report a pass.
+  if (raw.rerunFailure != null || raw.rerunError != null) return 'failed';
   if (raw.skipped != null) return 'skipped';
   return 'passed';
+}
+
+/**
+ * Did the runner itself observe this test both failing and passing?
+ *
+ * `<flakyFailure>` is the runner saying so outright: it retried, and the retry
+ * passed. That is the same proof as a same-commit contradiction, handed to us
+ * for free on the very first run. Treating these testcases as ordinary passes,
+ * as we used to, discarded a signal the test framework had already paid for.
+ *
+ * `<rerunFailure>` is deliberately not included: it means every attempt failed,
+ * so nothing contradicts anything.
+ */
+function contradictedInRun(raw: RawCase): boolean {
+  return raw.flakyFailure != null || raw.flakyError != null;
 }
 
 /**
@@ -75,8 +100,11 @@ function collect(suite: RawSuite, prefix: string[], out: TestCase[]): void {
       durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : 0,
       failureMessage:
         status === 'failed'
-          ? messageOf(raw.failure ?? raw.error)
+          ? messageOf(raw.failure ?? raw.error ?? raw.rerunFailure ?? raw.rerunError)
           : undefined,
+      // Left undefined rather than false so the flag never appears in stored
+      // output for the overwhelming majority of tests that did not retry.
+      contradictedInRun: contradictedInRun(raw) || undefined,
     });
   }
 

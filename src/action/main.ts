@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
-import { analyze, appendRun, emptyHistory } from '../core/flake.js';
+import { analyze, appendRun, emptyHistory, migrateV1 } from '../core/flake.js';
 import { collectRun } from '../core/collect.js';
 import { renderComment } from '../report/comment.js';
 import { renderTerminal } from '../report/terminal.js';
@@ -10,17 +10,35 @@ import {
   type ExistingComment,
 } from './comment.js';
 import { checkProtection } from './protection.js';
+import { recordRefusal } from './record-guard.js';
 import { readHistoryFile, writeHistoryFile } from './history-branch.js';
 import type { HistoryFile } from '../core/types.js';
 
 function parseHistory(raw: string | null): HistoryFile {
   if (raw === null) return emptyHistory();
   try {
-    const parsed = JSON.parse(raw) as HistoryFile;
-    if (parsed.version !== 1 || !Array.isArray(parsed.runs)) {
-      throw new Error('unexpected shape');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!Array.isArray(parsed.runs)) throw new Error('unexpected shape');
+
+    // Version 1 stored results as an object keyed by full test id in every run.
+    // Upgrade rather than reject: weeks of accumulated history cannot be
+    // regenerated, and this data is the only thing making the tool useful.
+    if (parsed.version === 1) {
+      const upgraded = migrateV1(
+        parsed as unknown as Parameters<typeof migrateV1>[0],
+      );
+      core.info(
+        `upgraded history from version 1 to 2 (${upgraded.runs.length} runs, ` +
+          `${upgraded.tests.length} tests); the next recorded run writes the new format`,
+      );
+      return upgraded;
     }
-    return parsed;
+
+    if (parsed.version !== 2 || !Array.isArray(parsed.tests)) {
+      throw new Error(`unsupported version ${String(parsed.version)}`);
+    }
+
+    return parsed as unknown as HistoryFile;
   } catch (err) {
     // Refusing to continue would block the user's CI over our own data file.
     core.warning(
@@ -187,7 +205,20 @@ export async function run(): Promise<void> {
     }
   }
 
-  if (shouldRecord) {
+  // Enforced here rather than trusted to the caller's YAML. See record-guard.ts.
+  const refusal = shouldRecord
+    ? recordRefusal({
+        eventName: github.context.eventName,
+        branch: run.branch,
+        defaultBranch: github.context.payload.repository?.default_branch,
+      })
+    : null;
+
+  if (refusal) {
+    core.warning(refusal, { title: 'flakesieve: run not recorded' });
+  }
+
+  if (shouldRecord && !refusal) {
     const updated = appendRun(history, run);
     const pushed = await writeHistoryFile({
       branch,

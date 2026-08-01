@@ -1,4 +1,4 @@
-import type { Finding, Report } from '../core/types.js';
+import { contradictions, type Finding, type Report } from '../core/types.js';
 
 // Minimal ANSI helpers. Not worth a dependency, and colours are disabled
 // wholesale when the stream is not a TTY or NO_COLOR is set.
@@ -25,9 +25,18 @@ function line(f: Finding, colour: (s: string) => string): string[] {
   if (s.totalRuns > 0) {
     detail.push(`fails ${pct(s.failureRate)} of ${s.totalRuns} runs`);
   }
+  if (f.contradictedInRun) {
+    // The proof came from the run in hand, so it is not in `stats` yet. On a
+    // first-ever run it is the only evidence there is.
+    detail.push('failed and passed in this run');
+  }
   if (s.sameShaContradictions > 0) {
     const n = s.sameShaContradictions;
     detail.push(`${n} same-commit contradiction${n === 1 ? '' : 's'}`);
+  }
+  if (s.withinRunContradictions > 0) {
+    const n = s.withinRunContradictions;
+    detail.push(`${n} same-run contradiction${n === 1 ? '' : 's'}`);
   }
   if (s.recentOutcomes) {
     detail.push(s.recentOutcomes);
@@ -117,7 +126,7 @@ export function renderStats(report: Report, top: number): string {
     const s = f.stats;
     out.push(
       `  ${yellow(pct(s.failureRate).padStart(4))}  ${s.id}`,
-      `        ${gray(`${s.failures}/${s.totalRuns} failed · ${s.sameShaContradictions} contradictions · ${s.recentOutcomes}`)}`,
+      `        ${gray(`${s.failures}/${s.totalRuns} failed · ${contradictions(s)} contradictions · ${s.recentOutcomes}`)}`,
     );
   }
   out.push('');

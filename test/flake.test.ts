@@ -1,23 +1,54 @@
 import { describe, expect, it } from 'vitest';
-import { analyze, appendRun, classify, computeStats, emptyHistory } from '../src/core/flake.js';
-import { testId, type HistoryFile, type TestRun, type TestStatus } from '../src/core/types.js';
+import {
+  analyze,
+  appendRun,
+  classify,
+  computeStats,
+  emptyHistory,
+  migrateV1,
+} from '../src/core/flake.js';
+import {
+  DEFAULT_CONFIG,
+  testId,
+  type HistoryFile,
+  type TestCase,
+  type TestRun,
+  type TestStatus,
+} from '../src/core/types.js';
 
 const FLAKY = testId('auth', 'refreshes token');
 const SOLID = testId('auth', 'rejects bad password');
 
-/** Build a history from a compact spec: one string of P/F per test. */
+/**
+ * Build a history from a compact spec: one string of P/F/S/C per test.
+ *
+ * Since v2 the stored format is itself a positional string, so the spec now maps
+ * one character to one stored character.
+ */
 function historyFrom(spec: Record<string, string>, shas?: string[]): HistoryFile {
   const length = Math.max(...Object.values(spec).map((s) => s.length));
+  const tests = Object.keys(spec);
   const history = emptyHistory();
+  history.tests = tests;
 
   for (let i = 0; i < length; i++) {
-    const results: Record<string, 'p' | 'f' | 's'> = {};
-    for (const [id, outcomes] of Object.entries(spec)) {
-      const c = outcomes[i];
-      if (c === 'P') results[id] = 'p';
-      else if (c === 'F') results[id] = 'f';
-      else if (c === 'S') results[id] = 's';
-    }
+    const results = tests
+      .map((id) => {
+        switch (spec[id]?.[i]) {
+          case 'P':
+            return 'p';
+          case 'F':
+            return 'f';
+          case 'S':
+            return 's';
+          case 'C':
+            return 'c';
+          default:
+            return '-';
+        }
+      })
+      .join('');
+
     history.runs.push({
       runId: `run-${i}`,
       commitSha: shas?.[i] ?? `sha-${i}`,
@@ -30,18 +61,22 @@ function historyFrom(spec: Record<string, string>, shas?: string[]): HistoryFile
   return history;
 }
 
-function runWith(statuses: Record<string, TestStatus>): TestRun {
+function runWith(
+  statuses: Record<string, TestStatus>,
+  contradicted: string[] = [],
+): TestRun {
   return {
     runId: 'current',
     commitSha: 'head',
     branch: 'pr',
     timestamp: new Date().toISOString(),
-    tests: Object.entries(statuses).map(([id, status]) => ({
+    tests: Object.entries(statuses).map(([id, status]): TestCase => ({
       id,
       suite: id.split(' › ')[0] ?? '',
       name: id.split(' › ')[1] ?? '',
       status,
       durationMs: 1,
+      contradictedInRun: contradicted.includes(id) || undefined,
     })),
   };
 }
@@ -80,6 +115,29 @@ describe('computeStats', () => {
     const history = historyFrom({ [FLAKY]: 'PP', [SOLID]: 'PPPP' });
     expect(computeStats(history).get(FLAKY)!.recentOutcomes).toBe('PP··');
   });
+
+  it('counts a within-run contradiction as a failure but not a streak', () => {
+    // 'C' is a test that failed and passed inside one run. It caused trouble, so
+    // it counts against the rate, but it cannot be "broken" — it still passes.
+    const s = computeStats(historyFrom({ [FLAKY]: 'PPCCCCC' })).get(FLAKY)!;
+
+    expect(s.withinRunContradictions).toBe(5);
+    expect(s.failures).toBe(5);
+    expect(s.consecutiveFailures).toBe(0);
+    expect(s.recentOutcomes).toBe('PPCCCCC');
+    expect(classify(s)).toBe('flaky');
+  });
+
+  it('stops counting contradictions once they fall outside the window', () => {
+    // A contradiction on the first two runs, then a long clean stretch.
+    const history = historyFrom({ [FLAKY]: 'PFPPPPPP' }, [
+      'dup', 'dup', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7',
+    ]);
+    const config = { ...DEFAULT_CONFIG, contradictionWindow: 3 };
+
+    expect(computeStats(history).get(FLAKY)!.sameShaContradictions).toBe(1);
+    expect(computeStats(history, config).get(FLAKY)!.sameShaContradictions).toBe(0);
+  });
 });
 
 describe('classify', () => {
@@ -105,6 +163,25 @@ describe('classify', () => {
     expect(classify(s)).toBe('flaky');
   });
 
+  it('does not call a test flaky on the strength of one failure ever', () => {
+    // The rate check alone is degenerate here: 1/12 is 8%, far above the 1%
+    // threshold, so without minFailures this test would be excused as a known
+    // flake — and the next failure, possibly a real regression, filed as noise.
+    const s = computeStats(historyFrom({ [FLAKY]: 'PPFPPPPPPPPP' })).get(FLAKY)!;
+
+    expect(s.failures).toBe(1);
+    expect(s.failureRate).toBeGreaterThan(DEFAULT_CONFIG.flakeThreshold);
+    expect(classify(s)).toBe('healthy');
+  });
+
+  it('surfaces that single-failure test as a real failure, not suppressed noise', () => {
+    const history = historyFrom({ [FLAKY]: 'PPFPPPPPPPPP' });
+    const report = analyze(runWith({ [FLAKY]: 'failed' }), history);
+
+    expect(report.likelyReal.map((f) => f.stats.id)).toEqual([FLAKY]);
+    expect(report.knownFlakes).toHaveLength(0);
+  });
+
   it('returns broken for a long trailing failure streak', () => {
     const s = computeStats(historyFrom({ [FLAKY]: 'PPPPPPPFFFFF' })).get(FLAKY)!;
     expect(classify(s)).toBe('broken');
@@ -128,6 +205,20 @@ describe('classify', () => {
     expect(s.sameShaContradictions).toBe(1);
     expect(s.consecutiveFailures).toBe(7);
     expect(classify(s)).toBe('broken');
+  });
+
+  it('stops excusing failures once the contradiction ages out of the window', () => {
+    // A flake that was fixed long ago must not go on absorbing new failures.
+    // One failure only, so the contradiction is the sole reason for the flaky
+    // verdict — otherwise the rate rule would carry it and prove nothing.
+    const history = historyFrom(
+      { [FLAKY]: 'PFPPPPPPPPPP' },
+      ['dup', 'dup', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9', 'c10', 'c11'],
+    );
+    const config = { ...DEFAULT_CONFIG, contradictionWindow: 4 };
+
+    expect(classify(computeStats(history).get(FLAKY)!)).toBe('flaky');
+    expect(classify(computeStats(history, config).get(FLAKY)!, config)).toBe('healthy');
   });
 });
 
@@ -165,6 +256,33 @@ describe('analyze', () => {
     expect(report.insufficientHistory.map((f) => f.stats.id)).toEqual(['new › thing']);
   });
 
+  it('calls a within-run contradiction flaky on the very first run', () => {
+    // The cold-start case. With no history at all, a test that failed and passed
+    // inside this single run is still proven non-deterministic — same commit,
+    // same machine, same execution. Waiting for dozens of runs to say so is the
+    // difference between useful on day one and useless for a month.
+    const report = analyze(
+      runWith({ [FLAKY]: 'failed' }, [FLAKY]),
+      emptyHistory(),
+    );
+
+    expect(report.knownFlakes.map((f) => f.stats.id)).toEqual([FLAKY]);
+    expect(report.insufficientHistory).toHaveLength(0);
+    expect(report.likelyReal).toHaveLength(0);
+  });
+
+  it('lets a within-run contradiction outrank a clean history', () => {
+    // Otherwise a test with a spotless record that visibly flakes right now
+    // would be reported as a real regression.
+    const report = analyze(
+      runWith({ [SOLID]: 'failed' }, [SOLID]),
+      historyFrom({ [SOLID]: 'PPPPPPPPPPPP' }),
+    );
+
+    expect(report.knownFlakes.map((f) => f.stats.id)).toEqual([SOLID]);
+    expect(report.likelyReal).toHaveLength(0);
+  });
+
   it('reports a pre-existing breakage separately from the PR', () => {
     const history = historyFrom({ [FLAKY]: 'PPPPPPPFFFFF' });
     const report = analyze(runWith({ [FLAKY]: 'failed' }), history);
@@ -177,7 +295,7 @@ describe('analyze', () => {
     const rare = testId('a', 'rare');
     const often = testId('a', 'often');
     const history = historyFrom({
-      [rare]: 'PPPPPPPPPPPF',
+      [rare]: 'PPPPPFPPPPPF',
       [often]: 'PFPFPFPFPFPF',
     });
 
@@ -201,5 +319,157 @@ describe('appendRun', () => {
 
     expect(history.runs).toHaveLength(3);
     expect(history.runs.map((r) => r.runId)).toEqual(['r2', 'r3', 'r4']);
+  });
+
+  it('stores outcomes positionally against the interned id table', () => {
+    const history = appendRun(emptyHistory(), {
+      runId: 'r1',
+      commitSha: 'sha',
+      branch: 'main',
+      timestamp: new Date().toISOString(),
+      tests: [
+        { id: SOLID, suite: 'auth', name: 'a', status: 'passed', durationMs: 1 },
+        { id: FLAKY, suite: 'auth', name: 'b', status: 'failed', durationMs: 1 },
+      ],
+    });
+
+    expect(history.tests).toEqual([SOLID, FLAKY]);
+    expect(history.runs[0]!.results).toBe('pf');
+  });
+
+  it('records a contradicted test as c, not as a plain failure', () => {
+    const history = appendRun(emptyHistory(), {
+      runId: 'r1',
+      commitSha: 'sha',
+      branch: 'main',
+      timestamp: new Date().toISOString(),
+      tests: [
+        {
+          id: FLAKY,
+          suite: 'auth',
+          name: 'b',
+          status: 'failed',
+          durationMs: 1,
+          contradictedInRun: true,
+        },
+      ],
+    });
+
+    expect(history.runs[0]!.results).toBe('c');
+  });
+
+  it('drops ids that no retained run mentions', () => {
+    // Otherwise the id table grows forever: every test ever renamed or deleted
+    // would keep costing bytes in a file fetched and pushed on every CI run.
+    const gone = testId('old', 'deleted test');
+    let history = emptyHistory(2);
+
+    history = appendRun(history, {
+      runId: 'r0',
+      commitSha: 's0',
+      branch: 'main',
+      timestamp: new Date().toISOString(),
+      tests: [{ id: gone, suite: 'old', name: 'deleted test', status: 'passed', durationMs: 1 }],
+    });
+    expect(history.tests).toContain(gone);
+
+    for (const runId of ['r1', 'r2']) {
+      history = appendRun(history, {
+        runId,
+        commitSha: runId,
+        branch: 'main',
+        timestamp: new Date().toISOString(),
+        tests: [{ id: SOLID, suite: 'auth', name: 'x', status: 'passed', durationMs: 1 }],
+      });
+    }
+
+    expect(history.tests).toEqual([SOLID]);
+    expect(history.runs.every((r) => r.results.length === 1)).toBe(true);
+  });
+
+  it('keeps surviving ids in place so the diff stays small', () => {
+    let history = emptyHistory();
+    history = appendRun(history, {
+      runId: 'r0',
+      commitSha: 's0',
+      branch: 'main',
+      timestamp: new Date().toISOString(),
+      tests: [
+        { id: SOLID, suite: 'a', name: 'x', status: 'passed', durationMs: 1 },
+        { id: FLAKY, suite: 'a', name: 'y', status: 'passed', durationMs: 1 },
+      ],
+    });
+
+    history = appendRun(history, {
+      runId: 'r1',
+      commitSha: 's1',
+      branch: 'main',
+      timestamp: new Date().toISOString(),
+      tests: [
+        { id: FLAKY, suite: 'a', name: 'y', status: 'passed', durationMs: 1 },
+        { id: SOLID, suite: 'a', name: 'x', status: 'passed', durationMs: 1 },
+        { id: 'a › new', suite: 'a', name: 'new', status: 'passed', durationMs: 1 },
+      ],
+    });
+
+    expect(history.tests).toEqual([SOLID, FLAKY, 'a › new']);
+  });
+});
+
+describe('migrateV1', () => {
+  it('preserves every outcome while switching to the positional encoding', () => {
+    const upgraded = migrateV1({
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      maxRuns: 50,
+      runs: [
+        {
+          runId: 'r0',
+          commitSha: 'abc',
+          branch: 'main',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          results: { [SOLID]: 'p', [FLAKY]: 'f' },
+        },
+        {
+          runId: 'r1',
+          commitSha: 'abc',
+          branch: 'main',
+          timestamp: '2026-01-01T00:01:00.000Z',
+          results: { [SOLID]: 'p', [FLAKY]: 'p' },
+        },
+      ],
+    });
+
+    expect(upgraded.version).toBe(2);
+    expect(upgraded.maxRuns).toBe(50);
+    expect(upgraded.tests).toEqual([SOLID, FLAKY]);
+    expect(upgraded.runs.map((r) => r.results)).toEqual(['pf', 'pp']);
+
+    // The whole point: verdicts computed from the upgraded file are unchanged.
+    const s = computeStats(upgraded).get(FLAKY)!;
+    expect(s.sameShaContradictions).toBe(1);
+    expect(classify(s)).toBe('flaky');
+  });
+
+  it('marks a test absent in runs that predate it', () => {
+    const upgraded = migrateV1({
+      runs: [
+        {
+          runId: 'r0',
+          commitSha: 'a',
+          branch: 'main',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          results: { [SOLID]: 'p' },
+        },
+        {
+          runId: 'r1',
+          commitSha: 'b',
+          branch: 'main',
+          timestamp: '2026-01-01T00:01:00.000Z',
+          results: { [SOLID]: 'p', [FLAKY]: 'f' },
+        },
+      ],
+    });
+
+    expect(upgraded.runs.map((r) => r.results)).toEqual(['p-', 'pf']);
   });
 });
