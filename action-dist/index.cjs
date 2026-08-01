@@ -27595,6 +27595,26 @@ function decideComment(rendered, existing) {
   if (mine.body === rendered) return { kind: "none" };
   return { kind: "update", id: mine.id, body: rendered };
 }
+function errorStatus(err) {
+  if (typeof err !== "object" || err === null) return void 0;
+  const { status } = err;
+  return typeof status === "number" ? status : void 0;
+}
+function commentFailureWarning(err) {
+  if (errorStatus(err) === 403) {
+    return [
+      "Could not post the flakesieve comment: the token is not allowed to write",
+      "to this pull request.",
+      "",
+      "This is expected on pull requests from forks. GitHub issues a read-only",
+      "GITHUB_TOKEN there, and no `permissions:` block can widen it.",
+      "",
+      "The verdicts are unaffected \u2014 they are in the job summary and the step log",
+      "above. Set `comment: false` to silence this."
+    ].join("\n");
+  }
+  return `Could not post the flakesieve comment: ${err instanceof Error ? err.message : String(err)}`;
+}
 
 // src/action/protection.ts
 var REQUIRED_RULES = ["deletion", "non_fast_forward"];
@@ -27826,7 +27846,13 @@ async function run() {
     }
   }
   if (shouldComment) {
-    await upsertComment(renderComment(report));
+    try {
+      await upsertComment(renderComment(report));
+    } catch (err) {
+      warning(commentFailureWarning(err), {
+        title: "flakesieve: comment not posted"
+      });
+    }
   }
   if (shouldRecord) {
     const updated = appendRun(history, run2);
