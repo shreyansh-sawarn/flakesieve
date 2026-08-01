@@ -41,27 +41,27 @@ present, with GitHub still taking precedence on GitHub, and unit tests cover bot
 
 ---
 
-### 4. Post and update the PR comment in the action
+### 4. Auto-quarantine known flakes
 
-`action.yml` renders the comment to a file but never posts it. It should find an
-existing comment by `COMMENT_MARKER` and update it in place, creating one only if none
-exists — never a new comment per push.
+Add an input that makes the job pass when the *only* failures are known flakes, so a
+flaky test can never block a merge. `fail-on-real` already does most of this; what is
+missing is a documented quarantine list for tests that should be ignored outright, and
+a way to expire entries so quarantine does not become permanent.
 
-**Files:** `action.yml`, likely a small `src/action.ts`.
-**Done when:** pushing twice to a PR leaves exactly one flakesieve comment, updated.
+**Files:** `src/action/main.ts`, `action.yml`, `README.md`.
+**Done when:** a quarantined test failing does not fail the job, quarantine entries
+carry an expiry, and an expired entry produces a warning.
 
 ---
 
-### 5. Push history back to the orphan branch
+### 5. Handle test reports split across shards
 
-The `record` input exists but does nothing. It should commit the updated history file
-to the history branch and force-push.
+Teams running sharded CI produce one report per shard, sometimes in separate jobs.
+`collectRun` merges multiple files, but only within a single job.
 
-**Files:** `action.yml`.
-**Done when:** consecutive default-branch runs accumulate history, and the first run on
-a repo with no history branch creates it.
-**Careful:** must only ever touch the history branch. See
-[history-storage.md](history-storage.md).
+**Files:** `src/core/collect.ts`, `src/action/main.ts`.
+**Done when:** reports downloaded from multiple shard artifacts merge into one logical
+run, and a test that passes on one shard and fails on another is recorded as failed.
 
 ---
 

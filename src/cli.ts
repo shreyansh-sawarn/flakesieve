@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
-import { glob } from 'node:fs/promises';
 import { analyze, appendRun, emptyHistory } from './core/flake.js';
+import { collectRun as collect } from './core/collect.js';
 import { loadHistory, saveHistory } from './core/history.js';
-import { parserFor } from './parsers/index.js';
 import { renderComment } from './report/comment.js';
 import { renderStats, renderTerminal } from './report/terminal.js';
-import type { TestCase, TestRun } from './core/types.js';
+import type { TestRun } from './core/types.js';
 
 interface Args {
   command: string;
@@ -98,44 +96,16 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-/** Read every file matching the report globs and parse it into test cases. */
-async function collectRun(args: Args): Promise<TestRun> {
-  const files: string[] = [];
-  for (const pattern of args.report) {
-    for await (const f of glob(pattern)) files.push(f);
-  }
-
-  if (files.length === 0) {
-    throw new Error(
-      `no report files matched ${args.report.join(', ')}\n` +
-        'Check that your test runner emitted JUnit XML and that the glob is correct.',
-    );
-  }
-
-  const byId = new Map<string, TestCase>();
-
-  for (const file of files) {
-    const content = await readFile(file, 'utf8');
-    const parser = parserFor(content, file);
-    if (!parser) {
-      console.warn(`  skipped ${file}: no parser recognized this format`);
-      continue;
-    }
-    for (const test of parser.parse(content, file)) {
-      // Within a single run a test can appear twice via retries. A failure
-      // anywhere in the run is what matters, so failure wins the merge.
-      const existing = byId.get(test.id);
-      if (!existing || test.status === 'failed') byId.set(test.id, test);
-    }
-  }
-
-  return {
+/** Collect the current run, using the same code path the GitHub Action uses. */
+function collectRun(args: Args): Promise<TestRun> {
+  return collect({
+    patterns: args.report,
     runId: args.runId,
     commitSha: args.commit,
     branch: args.branch,
-    timestamp: new Date().toISOString(),
-    tests: [...byId.values()],
-  };
+    onSkip: (file) =>
+      console.warn(`  skipped ${file}: no parser recognized this format`),
+  });
 }
 
 async function main(): Promise<number> {

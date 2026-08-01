@@ -10,13 +10,27 @@ No account. No database. No vendor. Your test history lives in your repo.
 
 ```yaml
 # .github/workflows/test.yml
-- uses: flakesieve/flakesieve-action@v1
-  if: always()
-  with:
-    report-paths: '**/junit.xml'
+permissions:
+  contents: write        # to store history on its own branch
+  pull-requests: write   # to post the comment
+
+steps:
+  - uses: actions/checkout@v4
+  - run: npm test        # whatever emits JUnit XML
+
+  - uses: shreyansh-sawarn/flakesieve@v1
+    if: always()         # must run even when tests fail — that is the point
+    with:
+      report-paths: '**/junit.xml'
+      # Record only on the default branch. Recording PR runs would teach
+      # flakesieve that a genuinely broken test "fails sometimes".
+      record: ${{ github.ref == 'refs/heads/main' }}
 ```
 
-That's the whole setup.
+That's the whole setup. No account, no API key, no service to sign up for.
+
+On the first run there is no history, so everything is reported as unknown. It
+becomes useful after a few dozen runs on your default branch.
 
 ---
 
@@ -102,16 +116,20 @@ npx flakesieve stats --top 20
 
 ## Status
 
-**Early.** The core analysis engine and JUnit parser work and are tested. The GitHub Action wrapper is scaffolded but not yet published to the Marketplace. Interfaces may shift before `v1`.
+**Early but working.** The analysis engine, JUnit parser, CLI and GitHub Action all
+function end to end and are covered by tests. Not yet published to npm or the
+Actions Marketplace, so pin a commit SHA rather than `@v1` for now. Interfaces may
+shift before `v1`.
 
 Roadmap:
 
 - [x] JUnit XML parsing
 - [x] Flake classification (same-SHA contradictions + historical rate)
 - [x] PR comment + terminal renderers
-- [ ] GitHub Action published to Marketplace
-- [ ] Orphan-branch history store
-- [ ] Auto-quarantine (`--quarantine` exit code so known flakes don't fail the build)
+- [x] GitHub Action — posts and updates the PR comment
+- [x] Orphan-branch history store
+- [ ] Published to npm and the Actions Marketplace
+- [ ] Auto-quarantine (exit code so known flakes never fail the build)
 - [ ] GitLab CI / Buildkite / CircleCI adapters
 - [ ] Coverage-based test selection — run only tests affected by the diff
 

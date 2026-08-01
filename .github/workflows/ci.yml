@@ -37,3 +37,38 @@ jobs:
           node dist/cli.js analyze \
             --report "test/fixtures/demo-run.xml" \
             --history "$RUNNER_TEMP/history.json"
+
+  # The action bundle is committed, so it can silently drift from source. A stale
+  # bundle means users run code that no longer matches this repo — both a
+  # correctness problem and a supply-chain smell. Fail loudly instead.
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build:action
+
+      - name: Check the committed bundle is up to date
+        run: |
+          if ! git diff --quiet -- action-dist/; then
+            echo "::error::action-dist/ is stale. Run 'npm run build:action' and commit the result."
+            git diff --stat -- action-dist/
+            exit 1
+          fi
+          echo "bundle is current"
+
+      - name: Verify the action loads and runs
+        env:
+          INPUT_COMMENT: 'false'
+          INPUT_RECORD: 'false'
+          INPUT_FAIL-ON-REAL: 'false'
+          INPUT_REPORT-PATHS: 'test/fixtures/demo-run.xml'
+          INPUT_HISTORY-BRANCH: 'flakesieve-history'
+          INPUT_HISTORY-PATH: 'history.json'
+        run: node action-dist/index.cjs

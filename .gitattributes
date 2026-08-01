@@ -1,0 +1,10 @@
+# Normalize everything to LF in the repository.
+#
+# This matters more than usual here: action-dist/index.cjs is a committed build
+# artifact, and CI rebuilds it on Linux to check for drift. Without this, a bundle
+# committed from Windows with CRLF would differ from the LF one CI produces, and
+# the drift check would fail on every single run.
+* text=auto eol=lf
+
+# Fixtures are parsed byte-for-byte in tests; keep them stable.
+*.xml text eol=lf
