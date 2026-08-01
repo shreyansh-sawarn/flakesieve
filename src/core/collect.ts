@@ -43,10 +43,34 @@ export async function collectRun(options: CollectOptions): Promise<TestRun> {
       continue;
     }
     for (const test of parser.parse(content, file)) {
-      // Within a single run a test can appear twice via retries. A failure
-      // anywhere in the run is what matters, so failure wins the merge.
       const existing = byId.get(test.id);
-      if (!existing || test.status === 'failed') byId.set(test.id, test);
+      if (!existing) {
+        byId.set(test.id, test);
+        continue;
+      }
+
+      // The same test appearing twice with different answers — a runner retry,
+      // or two report files disagreeing — is the strongest flake evidence there
+      // is: one commit, one machine, one execution, two outcomes. Collapsing it
+      // to a plain failure, as this used to, threw away the single signal that
+      // works on a user's first ever run.
+      const disagree =
+        (existing.status === 'failed') !== (test.status === 'failed') &&
+        existing.status !== 'skipped' &&
+        test.status !== 'skipped';
+
+      const contradicted =
+        disagree || existing.contradictedInRun || test.contradictedInRun;
+
+      // Failure still wins the reported status. Announcing a pass because a
+      // retry succeeded would hide a failure the user may want to see; the
+      // contradiction flag is what stops it being blamed on their change.
+      // Below that, an execution beats a skip — a test skipped on one shard and
+      // run on another did run.
+      const rank = (c: TestCase) =>
+        c.status === 'failed' ? 2 : c.status === 'passed' ? 1 : 0;
+      const winner = rank(test) > rank(existing) ? test : existing;
+      byId.set(test.id, { ...winner, contradictedInRun: contradicted || undefined });
     }
   }
 

@@ -75,3 +75,56 @@ describe('junitParser.parse', () => {
     expect(out[0]!.durationMs).toBe(500);
   });
 });
+
+describe('junitParser and runner-reported retries', () => {
+  const parse = (xml: string) => junitParser.parse(xml, 'reruns.xml');
+
+  it('treats a flakyFailure as proof of non-determinism, not as a plain pass', () => {
+    // Surefire writes this when a test failed and then passed on retry. The
+    // testcase has no <failure>, so before this it parsed as an ordinary pass
+    // and the runner's own evidence of a flake was discarded.
+    const out = parse(
+      '<testsuite name="s"><testcase name="retried" time="1">' +
+        '<flakyFailure message="boom">stack</flakyFailure>' +
+        '</testcase></testsuite>',
+    );
+
+    expect(out[0]!.status).toBe('passed');
+    expect(out[0]!.contradictedInRun).toBe(true);
+  });
+
+  it('treats flakyError the same way', () => {
+    const out = parse(
+      '<testsuite name="s"><testcase name="retried">' +
+        '<flakyError message="boom"/></testcase></testsuite>',
+    );
+    expect(out[0]!.contradictedInRun).toBe(true);
+  });
+
+  it('does not call a rerunFailure a contradiction', () => {
+    // Every attempt failed, so nothing contradicts anything. Marking this flaky
+    // would excuse a test that is simply broken.
+    const out = parse(
+      '<testsuite name="s"><testcase name="always fails">' +
+        '<failure message="boom"/><rerunFailure message="boom again"/>' +
+        '</testcase></testsuite>',
+    );
+
+    expect(out[0]!.status).toBe('failed');
+    expect(out[0]!.contradictedInRun).toBeUndefined();
+  });
+
+  it('still reports a failure when only a rerunFailure is present', () => {
+    const out = parse(
+      '<testsuite name="s"><testcase name="odd">' +
+        '<rerunFailure message="boom"/></testcase></testsuite>',
+    );
+    expect(out[0]!.status).toBe('failed');
+    expect(out[0]!.failureMessage).toBe('boom');
+  });
+
+  it('leaves the flag unset for ordinary tests', () => {
+    const out = parse('<testsuite name="s"><testcase name="fine"/></testsuite>');
+    expect(out[0]!.contradictedInRun).toBeUndefined();
+  });
+});

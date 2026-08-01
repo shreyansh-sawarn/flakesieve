@@ -1,4 +1,4 @@
-import type { Finding, Report } from '../core/types.js';
+import { contradictions, type Finding, type Report } from '../core/types.js';
 
 /**
  * Marker used to find and update flakesieve's own comment instead of posting a
@@ -31,7 +31,13 @@ function row(f: Finding): string {
   const verdict = `${MARKERS[f.verdict]} ${f.verdict}`;
   const rate =
     s.totalRuns === 0 ? '—' : `${pct(s.failureRate)} of ${s.totalRuns}`;
-  return `| \`${s.id}\` | ${verdict} | ${rate} | ${s.sameShaContradictions} | ${sparkline(s.recentOutcomes)} |`;
+  // A contradiction in the run being analyzed is not in `stats` yet — it is the
+  // reason for the verdict on a test with no history at all, so a bare 0 here
+  // would make the verdict look unsupported.
+  const proof = f.contradictedInRun
+    ? `${contradictions(s) + 1} (1 this run)`
+    : String(contradictions(s));
+  return `| \`${s.id}\` | ${verdict} | ${rate} | ${proof} | ${sparkline(s.recentOutcomes)} |`;
 }
 
 /**
@@ -103,7 +109,7 @@ export function renderComment(report: Report): string | null {
       '<details>',
       `<summary>${summary}</summary>`,
       '',
-      '| Test | Verdict | Failure rate | Same-commit contradictions | Recent |',
+      '| Test | Verdict | Failure rate | Contradictions | Recent |',
       '|---|---|---|---|---|',
       ...[...knownFlakes, ...alreadyBroken].map(row),
       '',

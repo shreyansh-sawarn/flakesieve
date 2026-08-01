@@ -65,13 +65,19 @@ disagreement.
 2. **Current state outranks history.** A test on a long unbroken failure streak
    is `broken` now, whatever it did months ago. This check runs *before* the
    same-SHA rule in `classify()` — do not reorder it.
-3. **Same-SHA contradiction is proof, not a heuristic.** The same test passing
-   and failing on the same commit is the strongest signal available and is the
-   one thing no competitor implements. It outranks the rate rules and the
-   `minRuns` floor.
-4. **Record only on the default branch.** Recording PR runs teaches the tool that
-   a genuinely broken test "fails sometimes" and turns real regressions into
-   reported flakes. The `record:` input defaults to `false` for this reason.
+3. **Contradictions are proof, not a heuristic.** The same test passing and
+   failing — on one commit across runs, or inside a single run — is the strongest
+   signal available and the one thing no competitor implements. It outranks the
+   rate rules and the `minRuns` floor. Within-run contradictions are what make
+   the tool useful on a user's first run; never discard one to simplify a merge.
+   Both are counted only inside `contradictionWindow`, because a flake that was
+   fixed long ago must stop excusing new failures.
+4. **Record only on the default branch, and enforce it in code.** Recording PR
+   runs teaches the tool that a genuinely broken test "fails sometimes" and turns
+   real regressions into reported flakes. `record:` defaults to `false`, and
+   `src/action/record-guard.ts` refuses regardless of what the workflow asks for.
+   The history file cannot be regenerated, so it does not get protected by
+   documentation alone.
 5. **Never fail the user's build for our own reasons.** An unreadable history
    file, a failed comment post, a missing branch — all warn and continue. The
    only thing allowed to fail a job is `fail-on-real: true` finding a real

@@ -76,15 +76,14 @@ carries a warning that ids may have changed shape, and the renderers surface it.
 
 ---
 
-### 7. Compact the history file
+### 7. ~~Compact the history file~~ — done
 
-At ~2,000 tests × 200 runs the JSON reaches roughly 12 MB. Every run rewrites it.
+Shipped as history schema v2: ids are interned once and each run is a positional
+string. Measured at 2,000 tests × 200 runs, the file went from 34.99 MB to 0.57 MB.
 
-**Files:** `src/core/history.ts`, `docs/history-storage.md`.
-**Done when:** the format stores a test-id dictionary once and references tests by
-integer index, `loadHistory` still reads version 1 files, and a stated size reduction is
-measured on a generated fixture.
-**Note:** this is the largest of these — take it if you want something meatier.
+It was listed here as a good first issue, which was a misjudgement: a storage
+format is not a first contribution, and it only got harder to change the longer
+real history existed to migrate. See [history-storage.md](history-storage.md).
 
 ---
 

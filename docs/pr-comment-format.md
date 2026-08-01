@@ -30,7 +30,7 @@ First time this test has ever failed in 184 runs. This one is probably yours.
 <details>
 <summary>🟡 2 known flakes suppressed · ⚫ 1 already broken on main</summary>
 
-| Test | Verdict | Failure rate | Same-commit contradictions | Recent |
+| Test | Verdict | Failure rate | Contradictions | Recent |
 |---|---|---|---|---|
 | `auth/SessionSpec › refreshes token near expiry` | 🟡 flaky | 37% of 184 | 12 | `PPFPPPFPFPPP` |
 | `search/IndexerSpec › reindexes within timeout` | 🟡 flaky | 8% of 184 | 3 | `PPPPPPPFPPPP` |
@@ -52,9 +52,22 @@ Do not remove it, and do not change its text.
 | Verdict | Marker | Meaning | Rule |
 |---|---|---|---|
 | Likely real | 🔴 | Failing now, no history of failing | `failures == 0` before this run |
-| Flaky | 🟡 | Fails intermittently, independent of the change | same-SHA contradiction, or failure rate in `[flakeThreshold, brokenThreshold)` with passes present |
-| Broken | ⚫ | Consistently failing, predates this PR | failure rate `>= brokenThreshold` |
+| Flaky | 🟡 | Fails intermittently, independent of the change | any contradiction inside `contradictionWindow`, or at least `minFailures` failures at a rate in `[flakeThreshold, brokenThreshold)` with passes present |
+| Broken | ⚫ | Consistently failing, predates this PR | failure rate `>= brokenThreshold`, or `consecutiveFailures >= brokenStreak` |
 | Unknown | ⚪ | Not enough history to judge | `totalRuns < minRuns` |
+
+A contradiction is the same test both passing and failing — either on one commit
+across two runs, or inside a single run (a retry, or two shards disagreeing). The
+within-run kind needs no history at all, so it is the only verdict that can be
+reached on a first-ever run. The Contradictions column counts both, and appends
+`(1 this run)` when the proof came from the run being reported rather than from
+stored history.
+
+Both kinds are counted only over the most recent `contradictionWindow` runs.
+`minFailures` exists because the rate check alone is degenerate near `minRuns`: at
+ten runs a single failure is already 10%, so without it every test that had ever
+failed once would be excused as a known flake, and its next failure — possibly a
+real regression — filed away as noise.
 
 `unknown` is deliberately **not** rendered as reassuring. A test with 3 runs of history
 gets reported as a plain failure with a note that history is thin. Under-claiming is
@@ -68,6 +81,7 @@ much cheaper than telling someone to ignore a real bug.
 |---|---|
 | `P` | passed |
 | `F` | failed |
+| `C` | failed **and** passed within that one run |
 | `S` | skipped |
 | `·` | test not present in that run |
 

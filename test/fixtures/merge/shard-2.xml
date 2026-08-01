@@ -1,0 +1,9 @@
+<testsuites>
+  <testsuite name="checkout">
+    <testcase classname="checkout/CartSpec" name="flips under load" time="0.3"/>
+    <testcase classname="checkout/CartSpec" name="always passes" time="0.1"/>
+    <testcase classname="checkout/CartSpec" name="always fails" time="0.2">
+      <failure message="assertion failed">stack</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
