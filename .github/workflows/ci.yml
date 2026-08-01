@@ -71,4 +71,55 @@ jobs:
           INPUT_REPORT-PATHS: 'test/fixtures/demo-run.xml'
           INPUT_HISTORY-BRANCH: 'flakesieve-history'
           INPUT_HISTORY-PATH: 'history.json'
+          # This step runs against the synthetic demo fixture, whose "failures"
+          # are invented. Without this, those fake results are published to the
+          # real CI summary page and read as though flakesieve's own tests are
+          # failing — bad for any project, worse for one selling trustworthy
+          # verdicts about test failures.
+          GITHUB_STEP_SUMMARY: /dev/null
         run: node action-dist/index.cjs
+
+  # Dogfooding: run flakesieve against flakesieve's own test results.
+  #
+  # This is the real integration test — it exercises the committed bundle exactly
+  # as a user would consume it, via `uses: ./`. It also builds the history branch
+  # that makes the tool useful on this repo, and turns our own PRs into a live
+  # demo of the comment.
+  dogfood:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # push to the history branch
+      pull-requests: write   # post the PR comment
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full clone. The default shallow checkout can make pushing the history
+          # commit fail with "shallow update not allowed"; this repo is small
+          # enough that a full fetch costs nothing.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      # Deliberately non-fatal: flakesieve is the gate, not vitest. If the only
+      # failures are known flakes, the job should pass — that is the entire value
+      # proposition, and dogfooding it means actually letting it make the call.
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: npm test
+
+      - name: flakesieve
+        if: always()
+        uses: ./
+        with:
+          report-paths: junit.xml
+          # Record only on the default branch. Recording PR runs would teach
+          # flakesieve that a genuinely broken test "fails sometimes".
+          record: ${{ github.ref == 'refs/heads/main' }}
+          fail-on-real: true
