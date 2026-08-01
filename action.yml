@@ -36,6 +36,13 @@ inputs:
       test "fails sometimes" and turning real regressions into reported flakes.
     required: false
     default: 'false'
+  protection-check:
+    description: >
+      Warn when the history branch is not protected against deletion and
+      force-push. Advisory only — flakesieve never changes your repository
+      settings, and never asks for the permission that would let it.
+    required: false
+    default: 'true'
   fail-on-real:
     description: 'Fail the job when an unexplained failure is found. Known flakes never fail it.'
     required: false

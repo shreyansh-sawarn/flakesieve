@@ -5,6 +5,7 @@ import { collectRun } from '../core/collect.js';
 import { renderComment } from '../report/comment.js';
 import { renderTerminal } from '../report/terminal.js';
 import { decideComment, type ExistingComment } from './comment.js';
+import { checkProtection } from './protection.js';
 import { readHistoryFile, writeHistoryFile } from './history-branch.js';
 import type { HistoryFile } from '../core/types.js';
 
@@ -74,6 +75,42 @@ async function upsertComment(body: string | null): Promise<void> {
       core.info('comment already up to date — nothing to post');
       break;
   }
+}
+
+/**
+ * Report — never fix — missing protection on the history branch.
+ *
+ * Any failure here is swallowed. A repo whose token cannot read rulesets, or a
+ * plan without them, must not have its build disrupted by an advisory check.
+ */
+async function warnIfUnprotected(branch: string): Promise<void> {
+  if (!core.getBooleanInput('protection-check')) return;
+
+  const token = core.getInput('token');
+  if (!token) return;
+
+  const { owner, repo } = github.context.repo;
+  const octokit = github.getOctokit(token);
+
+  const warning = await checkProtection(
+    async (o, r, b) => {
+      try {
+        const res = await octokit.request(
+          'GET /repos/{owner}/{repo}/rules/branches/{branch}',
+          { owner: o, repo: r, branch: b },
+        );
+        return res.data.map((rule) => rule.type);
+      } catch {
+        // Cannot tell — say nothing rather than warn about a maybe-problem.
+        return null;
+      }
+    },
+    owner,
+    repo,
+    branch,
+  );
+
+  if (warning) core.warning(warning, { title: 'flakesieve: history branch unprotected' });
 }
 
 export async function run(): Promise<void> {
@@ -149,6 +186,8 @@ export async function run(): Promise<void> {
 
     if (pushed) {
       core.info(`recorded run to ${branch} (${updated.runs.length} runs stored)`);
+      // Only worth checking once the branch actually exists and holds data.
+      await warnIfUnprotected(branch);
     } else {
       core.warning(
         `could not push to ${branch} — another run updated it first. ` +
