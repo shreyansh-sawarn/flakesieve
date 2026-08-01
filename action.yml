@@ -3,12 +3,12 @@ description: 'Know which CI failures are real. Flags known flaky tests on pull r
 author: 'flakesieve contributors'
 
 branding:
-  icon: 'shield'
+  icon: 'filter'
   color: 'yellow'
 
 inputs:
   report-paths:
-    description: 'Glob for test report files (JUnit XML).'
+    description: 'Glob(s) for test report files (JUnit XML). Newline- or comma-separated.'
     required: false
     default: '**/junit.xml'
   history-branch:
@@ -16,7 +16,7 @@ inputs:
     required: false
     default: 'flakesieve-history'
   history-path:
-    description: 'Path to the history file within the history branch.'
+    description: 'Top-level filename for the history within the history branch.'
     required: false
     default: 'history.json'
   comment:
@@ -25,62 +25,30 @@ inputs:
     default: 'true'
   record:
     description: >
-      Append this run to history. Should be true only on the default branch —
-      recording PR runs would pollute the baseline with in-progress work.
+      Append this run to history. Set true only on the default branch — recording
+      PR runs poisons the baseline, teaching flakesieve that a genuinely broken
+      test "fails sometimes" and turning real regressions into reported flakes.
     required: false
     default: 'false'
   fail-on-real:
-    description: 'Fail the job only when an unexplained failure is found.'
+    description: 'Fail the job when an unexplained failure is found. Known flakes never fail it.'
     required: false
     default: 'false'
   token:
-    description: 'Token used to post the comment and push history.'
+    description: 'Token used to post the comment. Needs pull-requests: write.'
     required: false
     default: ${{ github.token }}
 
 outputs:
   likely-real:
     description: 'Count of failures with no history of failing.'
-    value: ${{ steps.analyze.outputs.likely-real }}
   known-flakes:
     description: 'Count of failures identified as known flakes.'
-    value: ${{ steps.analyze.outputs.known-flakes }}
+  already-broken:
+    description: 'Count of failures that predate this PR.'
+  runs-analyzed:
+    description: 'Number of historical runs the verdicts are based on.'
 
 runs:
-  using: 'composite'
-  steps:
-    - name: Fetch history branch
-      shell: bash
-      run: |
-        set -euo pipefail
-        mkdir -p "$RUNNER_TEMP/flakesieve"
-        # The branch legitimately does not exist on first run.
-        if git ls-remote --exit-code --heads origin "${{ inputs.history-branch }}" >/dev/null 2>&1; then
-          git fetch origin "${{ inputs.history-branch }}:${{ inputs.history-branch }}" --depth=1
-          git show "${{ inputs.history-branch }}:${{ inputs.history-path }}" \
-            > "$RUNNER_TEMP/flakesieve/history.json" 2>/dev/null || true
-        else
-          echo "no history branch yet — starting fresh"
-        fi
-
-    - name: Analyze
-      id: analyze
-      shell: bash
-      run: |
-        set -euo pipefail
-        npx --yes flakesieve@latest analyze \
-          --report "${{ inputs.report-paths }}" \
-          --history "$RUNNER_TEMP/flakesieve/history.json" \
-          --format json > "$RUNNER_TEMP/flakesieve/report.json"
-
-        echo "likely-real=$(jq '.likelyReal | length' "$RUNNER_TEMP/flakesieve/report.json")" >> "$GITHUB_OUTPUT"
-        echo "known-flakes=$(jq '.knownFlakes | length' "$RUNNER_TEMP/flakesieve/report.json")" >> "$GITHUB_OUTPUT"
-
-        npx --yes flakesieve@latest analyze \
-          --report "${{ inputs.report-paths }}" \
-          --history "$RUNNER_TEMP/flakesieve/history.json" \
-          --format markdown > "$RUNNER_TEMP/flakesieve/comment.md"
-
-    # TODO: post/update the PR comment keyed on the COMMENT_MARKER, and push the
-    # updated history back to the orphan branch when `record` is true.
-    # Tracked in docs/good-first-issues.md.
+  using: 'node24'
+  main: 'action-dist/index.cjs'
