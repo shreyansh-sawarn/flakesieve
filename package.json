@@ -1,0 +1,51 @@
+{
+  "name": "flakesieve",
+  "version": "0.1.0",
+  "description": "Know which CI failures are real. Flaky test detection with no vendor, no account, no database.",
+  "keywords": [
+    "flaky-tests",
+    "ci",
+    "testing",
+    "github-actions",
+    "junit",
+    "test-analytics",
+    "quarantine",
+    "developer-tools"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "flakesieve": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

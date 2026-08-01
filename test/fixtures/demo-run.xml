@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="demo PR run" tests="6" failures="4" time="12.4">
+  <testsuite name="auth" tests="2" failures="1" time="3.1">
+    <testcase classname="auth/SessionSpec" name="rejects bad password" time="0.412"/>
+    <testcase classname="auth/SessionSpec" name="refreshes token near expiry" time="1.204">
+      <failure message="expected 200, got 401" type="AssertionError"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="search" tests="1" failures="1" time="4.0">
+    <testcase classname="search/IndexerSpec" name="reindexes within timeout" time="4.001">
+      <failure message="Timeout of 4000ms exceeded" type="TimeoutError"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="billing" tests="1" failures="1" time="0.9">
+    <testcase classname="billing/InvoiceSpec" name="emits EU VAT line" time="0.900">
+      <error message="TypeError: cannot read property 'rate' of undefined"/>
+    </testcase>
+  </testsuite>
+  <testsuite name="checkout" tests="2" failures="1" time="4.4">
+    <testcase classname="checkout/CartTotals" name="splits shipping across vendors" time="2.2"/>
+    <testcase classname="checkout/CartTotals" name="applies bulk discount over 10 units" time="2.2">
+      <failure message="expected 45.00 to equal 40.50" type="AssertionError"/>
+    </testcase>
+  </testsuite>
+</testsuites>

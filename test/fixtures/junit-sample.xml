@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="5" failures="2" errors="0" time="4.221">
+  <testsuite name="auth" tests="3" failures="1" skipped="1" time="2.100">
+    <testcase classname="auth/SessionSpec" name="rejects bad password" time="0.412"/>
+    <testcase classname="auth/SessionSpec" name="refreshes token near expiry" time="1.204">
+      <failure message="expected 200, got 401" type="AssertionError">
+        Expected: 200
+        Received: 401
+      </failure>
+    </testcase>
+    <testcase classname="auth/SessionSpec" name="handles SSO callback" time="0.001">
+      <skipped/>
+    </testcase>
+  </testsuite>
+  <testsuite name="billing" tests="2" failures="1" time="2.121">
+    <testcase classname="billing/InvoiceSpec" name="emits EU VAT line" time="0.900">
+      <error message="TypeError: cannot read property 'rate' of undefined"/>
+    </testcase>
+    <testsuite name="nested" tests="1" failures="0" time="1.221">
+      <testcase name="totals round half up" time="1.221"/>
+    </testsuite>
+  </testsuite>
+</testsuites>
