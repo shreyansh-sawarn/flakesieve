@@ -8,3 +8,10 @@
 
 # Fixtures are parsed byte-for-byte in tests; keep them stable.
 *.xml text eol=lf
+
+# Binary assets must never be touched by the eol=lf rule above. Git's automatic
+# binary detection normally gets this right, but a corrupted demo GIF is not
+# worth leaving to inference.
+*.gif binary
+*.png binary
+*.jpg binary

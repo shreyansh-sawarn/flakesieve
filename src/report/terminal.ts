@@ -2,8 +2,14 @@ import { contradictions, type Finding, type Report } from '../core/types.js';
 
 // Minimal ANSI helpers. Not worth a dependency, and colours are disabled
 // wholesale when the stream is not a TTY or NO_COLOR is set.
+//
+// FORCE_COLOR overrides the TTY check, which matters more than it looks: GitHub
+// Actions renders ANSI in its log viewer but is not a TTY, so the step log is
+// colourless by default. NO_COLOR still wins — a user who has asked for no
+// colour anywhere means it.
 const enabled =
-  process.env.NO_COLOR === undefined && process.stdout.isTTY === true;
+  process.env.NO_COLOR === undefined &&
+  (process.env.FORCE_COLOR !== undefined || process.stdout.isTTY === true);
 
 const wrap = (code: string) => (s: string) =>
   enabled ? `\x1b[${code}m${s}\x1b[0m` : s;

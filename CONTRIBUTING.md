@@ -19,6 +19,24 @@ node dist/cli.js analyze --report "test/fixtures/demo-run.xml" --history .flakes
 
 Requires Node 22 or newer.
 
+## Regenerating the demo GIF
+
+`docs/media/demo.gif` is generated from that same command's real output, so it
+cannot drift away from what the tool actually prints. Needs Python with Pillow,
+and ffmpeg:
+
+```bash
+FORCE_COLOR=1 node dist/cli.js analyze --report test/fixtures/demo-run.xml --history .flakesieve/history.json > /tmp/demo.txt
+```
+
+```bash
+python scripts/make-demo-gif.py /tmp/demo.txt docs/media/demo.gif
+```
+
+Only regenerate it when the output format changes. Fonts are resolved from the
+system and default to Windows paths — pass `--font`, `--bold-font` and
+`--emoji-font` elsewhere.
+
 ## The easiest places to help
 
 Two parts of the codebase are deliberately built so you can contribute to them without

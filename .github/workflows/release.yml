@@ -1,0 +1,113 @@
+name: Release
+
+# Tagging is the trigger. `git tag v0.1.0 && git push origin v0.1.0` publishes to
+# npm, creates the GitHub release, and moves the major tag that users pin to.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that could make a release unusable is checked before anything is
+  # published. npm releases cannot be replaced — only deprecated — and an action
+  # tag is consumed by other people's CI the moment it exists.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      # A tag that disagrees with package.json publishes the wrong version to npm
+      # under the right-looking git tag, and the two can never be reconciled.
+      - name: Tag must match package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+          echo "releasing $pkg"
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # Users consume action-dist/ directly from the tag, so a stale bundle here
+      # ships code that does not match the source anyone can read.
+      - name: Action bundle must be current
+        run: |
+          npm run build:action
+          if ! git diff --quiet -- action-dist/; then
+            echo "::error::action-dist/ is stale at this tag. Rebuild and re-tag."
+            git diff --stat -- action-dist/
+            exit 1
+          fi
+
+      - name: Package installs and runs
+        run: |
+          npm pack
+          tarball="$(ls flakesieve-*.tgz)"
+          mkdir -p "$RUNNER_TEMP/install-check"
+          cd "$RUNNER_TEMP/install-check"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$tarball"
+          # The bin must actually be executable from a clean install — a missing
+          # shebang or an unbuilt dist only shows up here.
+          npx flakesieve --help
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release, move the major tag
+      id-token: write   # npm provenance attestation
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+      - run: npm run build
+
+      # --provenance links the tarball to this workflow run, so anyone can verify
+      # the published bytes were built from this commit rather than a laptop.
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Actions are pinned as `uses: owner/repo@v0`, a tag that moves to the
+      # newest release in that major. Without this, every user has to bump a
+      # patch version by hand and most simply never will.
+      - name: Move the major tag
+        run: |
+          major="$(echo "${GITHUB_REF_NAME}" | cut -d. -f1)"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -f "$major" "${GITHUB_REF_NAME}"
+          git push -f origin "$major"
+          echo "moved $major -> ${GITHUB_REF_NAME}"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag
