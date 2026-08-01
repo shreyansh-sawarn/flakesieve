@@ -4,9 +4,9 @@
 
 No account. No database. No vendor. Your test history lives in your repo.
 
-<!-- TODO: replace with the demo GIF. This is the single highest-leverage asset in this README.
-     Record: a PR with a red X → flakesieve comment appears → "known flake, 37% over 200 runs" → merge. -->
-![flakesieve in action](docs/media/demo.gif)
+<!-- Generated, not mocked up: real CLI output against the synthetic history that
+     scripts/seed-demo.mjs produces. Regenerate with scripts/make-demo-gif.py. -->
+![flakesieve sorting a failing test run into real failures, known flakes, and pre-existing breakage](docs/media/demo.gif)
 
 ```yaml
 # .github/workflows/test.yml
@@ -18,7 +18,7 @@ steps:
   - uses: actions/checkout@v7
   - run: npm test        # whatever emits JUnit XML
 
-  - uses: shreyansh-sawarn/flakesieve@v1
+  - uses: shreyansh-sawarn/flakesieve@v0
     if: always()         # must run even when tests fail — that is the point
     with:
       report-paths: '**/junit.xml'
@@ -72,7 +72,7 @@ The second kind needs no history at all, so flakesieve can call a flake on your 
 ## Example output
 
 ```
-  flakesieve  ·  184 runs analyzed  ·  1,246 tests tracked
+  flakesieve  ·  184 runs analyzed  ·  246 tests tracked
 
   🔴 Likely real failures (1)
      checkout/CartTotals › applies bulk discount over 10 units
@@ -80,13 +80,13 @@ The second kind needs no history at all, so flakesieve can call a flake on your 
 
   🟡 Known flakes (2)
      auth/SessionSpec › refreshes token near expiry
-        fails 37% of runs · 12 same-commit contradictions · PPFPPPFPFPPP
+        fails 36% of 184 runs · 24 same-commit contradictions · PPFFFPFPFFPP
      search/IndexerSpec › reindexes within timeout
-        fails 8% of runs · 3 same-commit contradictions · PPPPPPPFPPPP
+        fails 8% of 184 runs · 3 same-commit contradictions · FPPPPPPPPPPP
 
   ⚫ Already broken on main (1)
      billing/InvoiceSpec › emits EU VAT line
-        failing for 23 consecutive runs since a1b2c3d
+        failing for 23 consecutive runs
 ```
 
 The PR comment renders the same information as a table. See [docs/pr-comment-format.md](docs/pr-comment-format.md) for the exact spec.
@@ -143,9 +143,11 @@ npx flakesieve stats --top 20
 ## Status
 
 **Early but working.** The analysis engine, JUnit parser, CLI and GitHub Action all
-function end to end and are covered by tests. Not yet published to npm or the
-Actions Marketplace, so pin a commit SHA rather than `@v1` for now. Interfaces may
-shift before `v1`.
+function end to end and are covered by tests.
+
+Pin `@v0` — it moves to the newest `0.x` release. Interfaces may still shift, and
+`v1` will mean they have settled. The history file is versioned separately and is
+upgraded automatically, so a release never resets your accumulated data.
 
 Roadmap:
 
@@ -154,7 +156,7 @@ Roadmap:
 - [x] PR comment + terminal renderers
 - [x] GitHub Action — posts and updates the PR comment
 - [x] Orphan-branch history store
-- [ ] Published to npm and the Actions Marketplace
+- [x] Published to npm and the Actions Marketplace
 - [ ] Auto-quarantine (exit code so known flakes never fail the build)
 - [ ] GitLab CI / Buildkite / CircleCI adapters
 - [ ] Coverage-based test selection — run only tests affected by the diff

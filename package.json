@@ -13,6 +13,19 @@
     "developer-tools"
   ],
   "license": "MIT",
+  "author": "Shreyansh Sawarn",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shreyansh-sawarn/flakesieve.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shreyansh-sawarn/flakesieve/issues"
+  },
+  "homepage": "https://github.com/shreyansh-sawarn/flakesieve#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "engines": {
     "node": ">=22"

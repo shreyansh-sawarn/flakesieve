@@ -25,6 +25,16 @@ const tests = [
   ['checkout/CartTotals › splits shipping across vendors', 'solid'],
 ];
 
+// Filler so the "tests tracked" count reads like a real suite rather than six
+// hand-picked cases. These always pass and never appear in the analyzed run, so
+// they change no verdict — they only make the demo representative of the scale
+// the tool is meant to work at.
+const SUITES = ['auth', 'billing', 'checkout', 'search', 'orders', 'inventory', 'shipping'];
+for (let i = 0; i < 240; i++) {
+  const suite = SUITES[i % SUITES.length];
+  tests.push([`${suite}/Spec${i % 30} › case ${i}`, 'solid']);
+}
+
 // Deterministic PRNG so demo output is reproducible across machines.
 let seed = 42;
 const rand = () => {

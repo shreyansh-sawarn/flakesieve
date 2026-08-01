@@ -27629,7 +27629,7 @@ function renderComment(report) {
 }
 
 // src/report/terminal.ts
-var enabled = process.env.NO_COLOR === void 0 && process.stdout.isTTY === true;
+var enabled = process.env.NO_COLOR === void 0 && (process.env.FORCE_COLOR !== void 0 || process.stdout.isTTY === true);
 var wrap = (code) => (s) => enabled ? `\x1B[${code}m${s}\x1B[0m` : s;
 var dim = wrap("2");
 var bold = wrap("1");
