@@ -21,17 +21,22 @@ Nothing else matters if the tool cannot be installed. The algorithm advantage is
 ~120 lines and reproducible by any competent team in a weekend; the window is
 open now.
 
-- [ ] **Publish to npm.** `npx flakesieve` is in the README and does not work.
-- [ ] **Publish to the GitHub Actions Marketplace.** Until then the README's
-      `@v1` is a lie and users must pin a SHA.
-- [ ] **Tag `v1` and set up the moving major tag** (`v1` → latest `v1.x`), the
-      convention every action in Tier 2 follows.
-- [ ] **Record the demo GIF.** `README.md:7` still has the TODO. Highest-leverage
-      single asset in the README: red X → comment → "known flake, 37% over 200
-      runs" → merge.
+- [x] **Release automation.** `.github/workflows/release.yml` publishes to npm
+      with provenance on a `v*.*.*` tag, moves the major tag, and cuts the GitHub
+      release. Guards against the two things that cannot be undone: a tag that
+      disagrees with `package.json`, and a stale `action-dist/` at the tag.
+      See [releasing.md](releasing.md).
+- [x] **Demo GIF** — `docs/media/demo.gif`, generated from real CLI output by
+      `scripts/make-demo-gif.py` rather than mocked up, so it cannot drift from
+      what the tool prints.
+- [ ] **Publish to npm.** Needs `NPM_TOKEN` in repository secrets, then a tag.
+- [ ] **List on the GitHub Actions Marketplace.** A checkbox on the first
+      release; GitHub gates it behind the UI and it cannot be automated.
 - [ ] **Repo metadata for discoverability** — topics (`flaky-tests`,
       `github-actions`, `test-analytics`), description, social preview. Search is
       how the Tier 3 projects get found at all.
+- [ ] **Move to `v1`** once the interfaces have settled. `v0` is the honest pin
+      until then.
 
 ## P1 — Close the structural gaps
 
