@@ -34,6 +34,11 @@ need to touch the analysis engine.
 
 Wanted: TRX (.NET), TAP, Go's `test2json`, Cucumber JSON, Playwright JSON, Allure.
 
+Before you start, [docs/prior-art.md](docs/prior-art.md) points at existing
+implementations of most of these formats and — more useful — at two public
+corpora holding several hundred real-world report files, including the malformed
+ones. The happy path is easy; those files are where the bugs are.
+
 ### CI adapters
 
 Right now the run identity (commit SHA, branch, run id) is read from GitHub Actions
