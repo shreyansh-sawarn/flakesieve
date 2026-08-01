@@ -1,0 +1,19 @@
+# Every change requires review from the maintainer.
+#
+# Combined with the "main" ruleset's require_code_owner_review, this makes
+# @shreyansh-sawarn a mandatory reviewer on all contributor pull requests.
+#
+# GitHub never requests review from a PR's own author, so this does not block
+# the maintainer's own PRs — those are covered by the admin bypass, which is
+# scoped to pull requests only and cannot be used to push to main directly.
+* @shreyansh-sawarn
+
+# The analysis engine decides whether someone's failing build is their fault.
+# A wrong verdict here is worse than no tool at all, so these paths are called
+# out explicitly to make review of them deliberate rather than incidental.
+/src/core/flake.ts @shreyansh-sawarn
+/src/action/ @shreyansh-sawarn
+
+# The committed action bundle is executable code that runs in users' CI.
+# Treat any change to it as security-relevant.
+/action-dist/ @shreyansh-sawarn
